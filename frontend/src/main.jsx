@@ -3,8 +3,20 @@ import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
 import './index.css';
 
-// Register Service Worker
-if ('serviceWorker' in navigator) {
+const isProd = import.meta.env.PROD;
+const enableServiceWorker = isProd || import.meta.env.VITE_ENABLE_SW === 'true';
+
+// Unregister any stale service workers during development unless explicitly enabled.
+if (!enableServiceWorker && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.getRegistrations().then((regs) => {
+      regs.forEach((reg) => reg.unregister());
+    });
+  });
+}
+
+// Register Service Worker in production, or in dev when explicitly enabled.
+if (enableServiceWorker && 'serviceWorker' in navigator) {
   window.addEventListener('load', async () => {
     try {
       const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });

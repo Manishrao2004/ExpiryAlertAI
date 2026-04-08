@@ -311,7 +311,6 @@ export default function AddItemPanel({ onSuccess, onCancel }) {
                       ref={fileInputRef}
                       type="file"
                       accept="image/*"
-                      capture="environment"
                       onChange={e => handleFile(e.target.files[0], true)}
                       className="hidden"
                     />

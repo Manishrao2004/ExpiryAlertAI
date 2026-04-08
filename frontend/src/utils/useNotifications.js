@@ -16,7 +16,12 @@ export function useNotifications() {
       // Re-sync basic state
       setPermission(Notification.permission);
       
-      const reg = await navigator.serviceWorker.ready;
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (!reg) {
+        setSubscription(null);
+        subRef.current = null;
+        return;
+      }
       const existing = await reg.pushManager.getSubscription();
       if (existing) {
         setSubscription(existing);
@@ -64,11 +69,20 @@ export function useNotifications() {
     setLoading(true);
     setError(null);
     try {
+      const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+      if (!window.isSecureContext && !isLocalhost) {
+        throw new Error('Push requires HTTPS. Use the https ngrok URL.');
+      }
+
       const granted = await requestPermission();
       if (!granted) return false;
 
-      // Ensure SW is ready
-      const reg = await navigator.serviceWorker.ready;
+      // Ensure SW is registered and ready
+      let reg = await navigator.serviceWorker.getRegistration();
+      if (!reg) {
+        reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+      }
+      const readyReg = await navigator.serviceWorker.ready;
       if (!reg) throw new Error('Service Worker not ready. Try reloading the page.');
 
       // Get VAPID key from server
@@ -78,7 +92,7 @@ export function useNotifications() {
       const applicationServerKey = urlBase64ToUint8Array(publicKey);
 
       // Subscribe to push
-      const pushSub = await reg.pushManager.subscribe({
+      const pushSub = await readyReg.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey
       });
