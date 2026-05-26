@@ -27,7 +27,7 @@ Snap a photo → OCR reads the date → AI confirms it → You get notified. Don
 
 | 🏠 Home — Inventory | ➕ Add Product (OCR / Manual) | 🔔 Alerts & Push Notifications |
 |:---:|:---:|:---:|
-| ![Home screen showing 4 tracked products with Safe status, search bar, and stats bar](docs/screenshots/Screenshot%202026-05-26%20172519.png) | ![Add Product panel with Scan Image and Manual Entry tabs, camera and upload options](docs/screenshots/Screenshot%202026-05-26%20172555.png) | ![Alerts tab showing push notification toggle and 4-stage alert schedule](docs/screenshots/Screenshot%202026-05-26%20172616.png) |
+| <img src="docs/screenshots/Screenshot%202026-05-26%20172519.png" width="200" height="450" alt="Home screen showing 4 tracked products with Safe status, search bar, and stats bar"> | <img src="docs/screenshots/Screenshot%202026-05-26%20172555.png" width="200" height="450" alt="Add Product panel with Scan Image and Manual Entry tabs, camera and upload options"> | <img src="docs/screenshots/Screenshot%202026-05-26%20172616.png" width="200" height="450" alt="Alerts tab showing push notification toggle and 4-stage alert schedule"> |
 | Track all your products with days-left countdown and expiry status badges | Scan a label with the camera **or** upload a photo — AI reads the expiry date automatically | Configure push alerts at 2 days, 1 day, day-of, and after expiry |
 
 </div>
