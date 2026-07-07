@@ -3,24 +3,24 @@ const router = express.Router();
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const rateLimit = require('express-rate-limit');
 const { extractTextFromImage } = require('../utils/ocrProcessor');
-const { detectExpiry, extractCandidates } = require('../utils/expiryDetector');
+const { authenticateToken } = require('../middleware/auth');
 
-// ─── Multer config ────────────────────────────────────────────────────────────
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const dir = path.join(__dirname, '../uploads');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
-    cb(null, `upload_${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`);
-  }
+// 
+const uploadLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000, // 24 hours
+  max: 100, // Limit each user to 100 OCR requests per day
+  skip: (req, res) => process.env.NODE_ENV !== 'production', // Unlimited in local dev
+  message: { error: 'Scan limit reached (100/day). Please try again tomorrow.' },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
+// 
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 15 * 1024 * 1024 }, // 15MB
   fileFilter: (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) cb(null, true);
@@ -28,58 +28,91 @@ const upload = multer({
   }
 });
 
-// ─── POST /api/upload ─────────────────────────────────────────────────────────
-router.post('/', upload.single('image'), async (req, res) => {
+// 
+// The frontend keeps the File object in state.
+// Image is saved later when user clicks "Save to Inventory" via POST /api/items
+router.post('/', authenticateToken, uploadLimiter, upload.single('image'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ success: false, error: 'No image uploaded' });
   }
 
-  const filePath = req.file.path;
-  const relativePath = `uploads/${req.file.filename}`;
+  // Write buffer to a temp file so Sharp/Tesseract can read it
+  const ext = path.extname(req.file.originalname).toLowerCase() || '.jpg';
+  const tmpPath = path.join(os.tmpdir(), `ocr_tmp_${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`);
 
   try {
-    // Run OCR
-    const { text, confidence } = await extractTextFromImage(filePath);
+    fs.writeFileSync(tmpPath, req.file.buffer);
+
+    // ── Run OCR ───────────────────────────────────────────────────────────────
+    let ocrResult;
+    try {
+      ocrResult = await extractTextFromImage(tmpPath);
+    } catch (ocrErr) {
+      console.error('OCR pipeline failed:', ocrErr.message);
+      return res.status(422).json({
+        success: false,
+        error: `OCR failed: ${ocrErr.message}. Please try a clearer image.`,
+      });
+    } finally {
+      // Always clean up temp file
+      try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (_) {}
+    }
+
+    const { text, confidence } = ocrResult;
     console.log('\n--- RAW OCR OUTPUT ---\n' + text + '\n----------------------\n');
 
-    // Use the comprehensive multi-date detector
+    // ── Run date detection ────────────────────────────────────────────────────
     const { detectDates } = require('../utils/expiryDetector');
     const heuristicResult = detectDates(text);
 
-    // If aiParser is available, run it and merge
-    const { parseDateWithAI, mergeResults } = require('../utils/aiParser');
-    const aiResult = await parseDateWithAI(text, heuristicResult.normalized); // use pass-2 normalized text if needed
-    
-    // Combine both logic paths
-    const final = mergeResults(aiResult, heuristicResult);
+    const { parseDateWithAI, mergeResults, callVisionAI } = require('../utils/aiParser');
+    const aiResult = await parseDateWithAI(text, heuristicResult.normalized);
+    let final = mergeResults(aiResult, heuristicResult);
 
+    // ── HYBRID FALLBACK: If local OCR failed entirely or has LOW CONFIDENCE, use Cloud Vision ───────
+    if (!final.exp || final.confidence < 0.75) {
+      console.log('Local OCR uncertain or failed. Falling back to Cloud Vision API...');
+      try {
+        const mimeType = req.file.mimetype;
+        const base64Data = req.file.buffer.toString('base64');
+        const dataUri = `data:${mimeType};base64,${base64Data}`;
+        
+        const visionResult = await callVisionAI(dataUri);
+        if (visionResult && visionResult.exp) {
+          console.log('Cloud Vision succeeded!');
+          final = {
+            mfd: visionResult.mfd,
+            exp: visionResult.exp,
+            confidence: visionResult.confidence || 0.9,
+            source: 'cloud-vision',
+            reasoning: visionResult.reasoning || 'Extracted via Vision API fallback'
+          };
+        }
+      } catch (visionErr) {
+        console.error('Vision Fallback failed:', visionErr?.response?.data || visionErr.message);
+      }
+    }
+
+    // ── Return OCR + date results only — image NOT saved yet ──────────────────
     res.json({
       success: true,
-      imagePath: relativePath,
+      // No imagePath/imagePublicId — image stays in frontend until user saves
       ocrText: text,
       aiConfidence: aiResult ? aiResult.confidence : 0,
       confidence: final.confidence * 100,
-      detectedDate: final.exp, // for backward-compat with frontend
+      detectedDate: final.exp,
       mfd: final.mfd,
       exp: final.exp,
       detected: !!final.exp,
       source: final.source,
       reasoning: final.reasoning,
-      candidates: heuristicResult.candidates // still provide raw candidates for UI to pick
+      candidates: heuristicResult.candidates,
     });
+
   } catch (err) {
+    try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch (_) {}
     console.error('Upload/OCR error:', err.message);
-    // Still return the image path so user can do manual entry
-    res.status(200).json({
-      success: true,
-      imagePath: relativePath,
-      ocrText: '',
-      confidence: 0,
-      detectedDate: null,
-      detected: false,
-      error: err.message,
-      candidates: []
-    });
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

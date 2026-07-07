@@ -25,13 +25,13 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-// ─── Image Preprocessing Pipelines ────────────────────────────────────────────
+// 
 
 /**
  * Scale to a consistent width for OCR (300 DPI equivalent).
  * Returns a sharp instance ready for further pipeline steps.
  */
-async function baseResize(inputPath, targetWidth = 2400) {
+async function baseResize(inputPath, targetWidth = 1200) {
   const meta = await sharp(inputPath).metadata();
   const w = meta.width || 800;
   const h = meta.height || 600;
@@ -54,19 +54,24 @@ async function baseResize(inputPath, targetWidth = 2400) {
 }
 
 /**
- * Pipeline A — Dot-matrix / ink-dot fonts
- * Works by bridging the gaps between dots, then binarising.
- * Best for: images 1, 4 (dot-matrix printer labels)
+ * Pipeline A — Dot-matrix / ink-dot fonts (IMPROVED)
+ * Simulates morphological DILATION to bridge gaps between dots.
+ * 1. Negate (text becomes white)
+ * 2. Blur (spreads the white dots)
+ * 3. Aggressive threshold (solidifies the spread dots into continuous lines)
+ * 4. Negate back
  */
 async function pipelineDotMatrix(inputPath, outPath) {
   const base = await baseResize(inputPath);
   await base
     .grayscale()
-    .clahe({ width: 30, height: 30 }) // Enhance local contrast for faint dots
+    .clahe({ width: 30, height: 30 })
     .normalize()
-    .blur(1.2)          // bridge dots
-    .threshold(140)     // slightly higher threshold to solidify bridged dots
-    .median(3)          
+    .negate()         // Text becomes white
+    .blur(1.5)        // Spread white pixels
+    .threshold(40)    // Solidify the spread (Dilation)
+    .median(2)        // Clean up noise
+    .negate()         // Back to black text
     .png({ quality: 100 })
     .toFile(outPath);
 }
@@ -93,18 +98,18 @@ async function pipelineCleanPrint(inputPath, outPath) {
  * Best for: image 4 (dirty/stained wrinkled label)
  */
 async function pipelineAdaptive(inputPath, outPath) {
-  const base = await baseResize(inputPath, 2800); // extra scale for small/noisy labels
+  const base = await baseResize(inputPath); // Strict dimension consistency
   await base
     .grayscale()
     .normalize()
     .blur(2.0)
-    .threshold(110)     // lower threshold catches ink on dark background
-    .median(5)          // stronger denoising for stains
+    .threshold(110)
+    .median(5)
     .png({ quality: 100 })
     .toFile(outPath);
 }
 
-// ─── Tesseract Runner ─────────────────────────────────────────────────────────
+// 
 
 const CHAR_WHITELIST =
   '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/-.() :,';
@@ -126,7 +131,7 @@ async function runTesseract(imagePath, psm = '6') {
   return { text: text.trim(), confidence: Math.round(confidence) };
 }
 
-// ─── Date token scorer ────────────────────────────────────────────────────────
+// 
 
 const DATE_SCORE_RE = [
   /\b\d{1,2}[\s\/\-\.]+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s\/\-\.]+\d{2,4}\b/gi,
@@ -142,7 +147,7 @@ function dateLikeScore(text) {
   }, 0);
 }
 
-// ─── Multi-pipeline OCR ───────────────────────────────────────────────────────
+// 
 
 /**
  * Run all three pipelines + two PSM modes and return the merged best text.
@@ -159,33 +164,62 @@ async function runMultiPipelineOCR(inputPath) {
     mixed:       `${base}_e.png`,
   };
 
-  // Run all preprocessing pipelines in parallel
+  // Run ALL 5 preprocessing pipelines in parallel (Restoring maximum accuracy)
   await Promise.all([
     pipelineDotMatrix(inputPath, paths.dotMatrix).catch(e => console.error('P1 Error:', e.message)),
     pipelineCleanPrint(inputPath, paths.cleanPrint).catch(e => console.error('P2 Error:', e.message)),
     pipelineAdaptive(inputPath, paths.adaptive).catch(e => console.error('P3 Error:', e.message)),
-    // Pipeline D: Stark Contrast (Good for extremely faint/faded thermal print)
+    // Pipeline D: Stark Contrast
     baseResize(inputPath).then(b => 
       b.grayscale().negate().normalize().negate().threshold(160).median(1).toFile(paths.stark)
     ).catch(e => console.error('P4 Error:', e.message)),
-    // Pipeline E: Mixed Polarity (Good for labels with dark sidebars + light center)
-    baseResize(inputPath, 2000).then(b =>
+    // Pipeline E: Mixed Polarity
+    baseResize(inputPath).then(b =>
       b.grayscale()
-       .clahe({ width: 50, height: 50 }) // Heavy CLAHE for mixed lighting
+       .normalize()
        .sharpen()
        .threshold(128)
        .toFile(paths.mixed)
     ).catch(e => console.error('P5 Error:', e.message)),
   ]);
 
-  // For each preprocessed image, run OCR with PSM 6 AND PSM 11
+  // 
+  // Instead of spawning 15 concurrent Tesseract workers (which choked the CPU for 16s),
+  // we stitch the 5 processed images into ONE giant vertical image.
+  // Tesseract reads this single stacked image top-to-bottom.
+  // This gives us the text from ALL 5 pipelines, but only requires 3 Tesseract jobs!
+  
+  const validPaths = Object.values(paths).filter(p => fs.existsSync(p));
+  const stackedPath = `${base}_stacked.png`;
+
+  if (validPaths.length > 0) {
+    const meta = await sharp(validPaths[0]).metadata();
+    const width = meta.width;
+    const height = meta.height;
+    const gap = 50; // Add 50px white gap between images so Tesseract doesn't bleed lines
+    const totalHeight = (height * validPaths.length) + (gap * (validPaths.length - 1));
+    
+    const composites = validPaths.map((p, i) => ({
+      input: p,
+      top: i * (height + gap),
+      left: 0
+    }));
+
+    await sharp({
+      create: { width, height: totalHeight, channels: 3, background: {r:255,g:255,b:255} }
+    })
+    .composite(composites)
+    .png()
+    .toFile(stackedPath);
+  }
+
+  // Run Tesseract with PSM 11, 6, and 4 to maximize accuracy for different text layouts
   const jobs = [];
-  for (const [label, imgPath] of Object.entries(paths)) {
-    if (!fs.existsSync(imgPath)) continue;
+  if (fs.existsSync(stackedPath)) {
     jobs.push(
-      runTesseract(imgPath, '6').then(r => ({ ...r, pipeline: label, psm: 6 })).catch(() => null),
-      runTesseract(imgPath, '11').then(r => ({ ...r, pipeline: label, psm: 11 })).catch(() => null),
-      runTesseract(imgPath, '4').then(r => ({ ...r, pipeline: label, psm: 4 })).catch(() => null),
+      runTesseract(stackedPath, '11').then(r => ({ ...r, pipeline: 'stacked', psm: 11 })).catch(() => null),
+      runTesseract(stackedPath, '6').then(r => ({ ...r, pipeline: 'stacked', psm: 6 })).catch(() => null),
+      runTesseract(stackedPath, '4').then(r => ({ ...r, pipeline: 'stacked', psm: 4 })).catch(() => null)
     );
   }
 
@@ -195,6 +229,7 @@ async function runMultiPipelineOCR(inputPath) {
   for (const p of Object.values(paths)) {
     try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
   }
+  try { if (fs.existsSync(stackedPath)) fs.unlinkSync(stackedPath); } catch (_) {}
 
   if (!results.length) throw new Error('All OCR pipelines failed');
 
@@ -231,7 +266,7 @@ async function runMultiPipelineOCR(inputPath) {
   };
 }
 
-// ─── Main export ──────────────────────────────────────────────────────────────
+// 
 
 /**
  * Main entry: multi-pipeline preprocess → OCR → merged best text

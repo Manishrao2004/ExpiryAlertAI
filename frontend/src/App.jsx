@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster, toast } from 'react-hot-toast';
 import Header from './components/Header';
 import Dashboard from './components/Dashboard';
@@ -8,11 +9,14 @@ import NotificationBanner from './components/NotificationBanner';
 import InstallBanner from './components/InstallBanner';
 import BottomNav from './components/BottomNav';
 import StatsBar from './components/StatsBar';
+import ProtectedRoute from './components/ProtectedRoute';
+import LoginPage from './pages/LoginPage';
 import { getItems, deleteItem, updateItem, getStats } from './utils/api';
 import { useNotifications } from './utils/useNotifications';
 import { sortItems } from './utils/dateUtils';
 
-export default function App() {
+// 
+function MainApp() {
   const [items, setItems]         = useState([]);
   const [stats, setStats]         = useState({ total: 0, safe: 0, expiringSoon: 0, expired: 0 });
   const [loading, setLoading]     = useState(true);
@@ -24,7 +28,7 @@ export default function App() {
   const notif = useNotifications();
   const refreshRef = useRef(null);
 
-  // ─── PWA install prompt ─────────────────────────────────────────────────────
+  // 
   useEffect(() => {
     const handler = (e) => {
       e.preventDefault();
@@ -35,7 +39,7 @@ export default function App() {
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
 
-  // ─── Load items ─────────────────────────────────────────────────────────────
+  // 
   const fetchItems = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
@@ -57,7 +61,7 @@ export default function App() {
     return () => clearInterval(refreshRef.current);
   }, [fetchItems]);
 
-  // ─── Check items on open and show local alerts ────────────────────────────
+  // 
   useEffect(() => {
     if (!items.length) return;
     const now = new Date(); now.setHours(0,0,0,0);
@@ -96,7 +100,7 @@ export default function App() {
     }
   }, [items]);
 
-  // ─── Item actions ───────────────────────────────────────────────────────────
+  // 
   const handleDelete = useCallback(async (id) => {
     const toastId = toast.loading('Deleting...');
     try {
@@ -126,14 +130,14 @@ export default function App() {
     toast.success('🎉 Item saved!');
   }, [fetchItems]);
 
-  // ─── Filtered items ─────────────────────────────────────────────────────────
+  // 
   const filteredItems = items.filter(item => {
     const matchFilter = filter === 'all' || item.status === filter;
     const matchSearch = !search || item.name.toLowerCase().includes(search.toLowerCase());
     return matchFilter && matchSearch;
   });
 
-  // ─── PWA Install ────────────────────────────────────────────────────────────
+  // 
   const handleInstall = async () => {
     if (!deferredPrompt) return;
     deferredPrompt.prompt();
@@ -213,7 +217,28 @@ export default function App() {
   );
 }
 
-// ─── Alerts Tab ───────────────────────────────────────────────────────────────
+// 
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <MainApp />
+            </ProtectedRoute>
+          }
+        />
+        {/* Catch-all: redirect to home (protected route will handle auth) */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+// 
 function AlertsTab({ notif, items, stats }) {
   const [testing, setTesting] = useState(false);
 

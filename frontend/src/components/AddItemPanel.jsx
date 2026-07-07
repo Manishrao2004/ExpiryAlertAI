@@ -136,7 +136,7 @@ export default function AddItemPanel({ onSuccess, onCancel }) {
     }
   };
 
-  // ─── File handling ──────────────────────────────────────────────────────────
+  // 
   const handleFile = useCallback((f, autoDetect = false) => {
     if (!f) return;
     if (!f.type.startsWith('image/')) return toast.error('Please select an image file');
@@ -157,7 +157,7 @@ export default function AddItemPanel({ onSuccess, onCancel }) {
     reader.readAsDataURL(f);
   }, []);
 
-  // ─── OCR Detect ─────────────────────────────────────────────────────────────
+  // 
   const handleDetect = async (targetFile = file) => {
     if (!targetFile) return;
     setUploading(true);
@@ -174,8 +174,10 @@ export default function AddItemPanel({ onSuccess, onCancel }) {
       if (result.detectedDate) {
         const d = new Date(result.detectedDate);
         setExpiryDate(toInputDate(d));
+        
+        const sourceText = result.source === 'cloud-vision' ? '☁️ Cloud Vision' : '🤖 Edge AI';
         toast.success(
-          `✅ Expiry date detected!${result.aiConfidence ? ' (AI Powered)' : ''}`,
+          `✅ Expiry date detected! (${sourceText})`,
           { id: toastId, duration: 3000 }
         );
       } else {
@@ -191,20 +193,24 @@ export default function AddItemPanel({ onSuccess, onCancel }) {
     }
   };
 
-  // ─── Save ────────────────────────────────────────────────────────────────────
+  // 
+  // Image is uploaded to storage HERE (when user clicks Save to Inventory)
+  // not during OCR scan. The `file` state holds the original File object.
   const handleSave = async () => {
     if (!productName.trim()) return toast.error('Please enter a product name');
     if (!expiryDate) return toast.error('Please enter the expiry date');
 
     setSaving(true);
     try {
-      await createItem({
-        name: productName.trim(),
-        expiryDate,
-        imagePath: ocrResult?.imagePath || null,
-        ocrText: ocrResult?.ocrText || null,
-        detectedByOCR: !!(ocrResult?.detectedDate)
-      });
+      await createItem(
+        {
+          name:          productName.trim(),
+          expiryDate,
+          ocrText:       ocrResult?.ocrText || null,
+          detectedByOCR: !!(ocrResult?.detectedDate),
+        },
+        file // File object — null for manual entry, original scan file otherwise
+      );
       onSuccess();
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to save item');
@@ -333,7 +339,10 @@ export default function AddItemPanel({ onSuccess, onCancel }) {
                 >✕</button>
                 {ocrResult?.detectedDate && (
                   <div className="absolute bottom-2 left-2 bg-emerald-500 text-white text-xs font-semibold px-2 py-1.5 rounded-lg shadow-lg flex items-center gap-1.5">
-                    ✅ Date Found {ocrResult?.aiConfidence && <span className="opacity-75">| AI Powered</span>}
+                    ✅ Date Found 
+                    <span className="opacity-90 ml-1 bg-black/20 px-1.5 py-0.5 rounded">
+                      {ocrResult.source === 'cloud-vision' ? '☁️ Cloud Vision' : '🤖 Edge AI'}
+                    </span>
                   </div>
                 )}
               </div>
@@ -365,7 +374,9 @@ export default function AddItemPanel({ onSuccess, onCancel }) {
                     <>
                       <p className="font-semibold text-sm">✅ Date successfully parsed</p>
                       <p className="text-slate-400 mt-0.5">
-                         {ocrResult.aiConfidence ? 'Generated via AI' : `Regex Confidence: ${ocrResult.confidence}%`}
+                         {ocrResult.source === 'cloud-vision' 
+                           ? 'Extracted via Cloud Vision Fallback (Max Accuracy)' 
+                           : `Extracted via Edge AI (Confidence: ${ocrResult.confidence}%)`}
                       </p>
                     </>
                   ) : (

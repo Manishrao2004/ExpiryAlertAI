@@ -2,7 +2,7 @@
 const CACHE_NAME = 'expiry-alert-v1';
 const STATIC_ASSETS = ['/', '/index.html', '/manifest.json', '/icon-192.png', '/icon-512.png', '/badge-96.png'];
 
-// ─── Install: cache static assets ────────────────────────────────────────────
+// 
 self.addEventListener('install', (event) => {
   console.log('[SW] Installing...');
   event.waitUntil(
@@ -14,7 +14,7 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// ─── Activate: cleanup old caches ────────────────────────────────────────────
+// 
 self.addEventListener('activate', (event) => {
   console.log('[SW] Activating...');
   event.waitUntil(
@@ -24,7 +24,7 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// ─── Fetch: network-first for API, cache-first for assets ────────────────────
+// 
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
@@ -56,7 +56,7 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-// ─── Push: receive and display notification ───────────────────────────────────
+// 
 self.addEventListener('push', (event) => {
   console.log('[SW] Push received');
 
@@ -96,7 +96,7 @@ self.addEventListener('push', (event) => {
   );
 });
 
-// ─── Notification Click ───────────────────────────────────────────────────────
+// 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
@@ -122,48 +122,7 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-// ─── Notification Close ───────────────────────────────────────────────────────
+// 
 self.addEventListener('notificationclose', (event) => {
   console.log('[SW] Notification dismissed:', event.notification.tag);
 });
-
-// ─── Periodic Sync (if supported) ─────────────────────────────────────────────
-self.addEventListener('periodicsync', (event) => {
-  if (event.tag === 'expiry-check') {
-    event.waitUntil(checkExpiries());
-  }
-});
-
-async function checkExpiries() {
-  try {
-    const response = await fetch('/api/items');
-    const { items } = await response.json();
-    if (!items) return;
-
-    const now = new Date(); now.setHours(0, 0, 0, 0);
-
-    for (const item of items) {
-      const exp = new Date(item.expiryDate); exp.setHours(0, 0, 0, 0);
-      const diff = Math.floor((exp - now) / 86400000);
-
-      if (diff === 2 || diff === 1 || diff === 0 || diff === -1) {
-        const messages = {
-          2: { title: `📅 2 Days Left: ${item.name}`, body: `Expires on ${exp.toLocaleDateString()}` },
-          1: { title: `⏰ Expires Tomorrow: ${item.name}`, body: 'Plan to use it today!' },
-          0: { title: `⚠️ Expires TODAY: ${item.name}`, body: 'Use it now or discard!' },
-          [-1]: { title: `🚨 EXPIRED: ${item.name}`, body: 'This item has expired. Please discard.' }
-        };
-        const msg = messages[diff] || messages[-1];
-
-        await self.registration.showNotification(msg.title, {
-          body: msg.body,
-          icon: '/icon-192.png',
-          badge: '/badge-96.png',
-          tag: `local-${item._id}-${diff}`,
-          data: { url: '/' },
-          vibrate: [200, 100, 200]
-        });
-      }
-    }
-  } catch (_) {}
-}

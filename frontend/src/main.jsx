@@ -22,14 +22,6 @@ if (enableServiceWorker && 'serviceWorker' in navigator) {
       const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
       console.log('[App] Service Worker registered:', reg.scope);
 
-      // Register periodic sync if supported
-      if ('periodicSync' in reg) {
-        try {
-          await reg.periodicSync.register('expiry-check', { minInterval: 24 * 60 * 60 * 1000 });
-          console.log('[App] Periodic sync registered');
-        } catch (_) {}
-      }
-
       // Listen for messages from SW
       navigator.serviceWorker.addEventListener('message', (event) => {
         if (event.data?.type === 'NOTIFICATION_CLICK') {

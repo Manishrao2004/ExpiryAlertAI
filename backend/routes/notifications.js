@@ -1,14 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const Subscription = require('../models/Subscription');
+const { authenticateToken } = require('../middleware/auth');
 
 // GET VAPID public key
 router.get('/vapid-public-key', (req, res) => {
   res.json({ publicKey: req.app.locals.vapidPublicKey });
 });
 
-// POST subscribe
-router.post('/subscribe', async (req, res) => {
+// POST subscribe — save userId so notifications are user-scoped
+router.post('/subscribe', authenticateToken, async (req, res) => {
   const { endpoint, keys } = req.body;
   if (!endpoint || !keys?.p256dh || !keys?.auth) {
     return res.status(400).json({ success: false, error: 'Invalid subscription payload' });
@@ -17,7 +18,7 @@ router.post('/subscribe', async (req, res) => {
   try {
     const sub = await Subscription.findOneAndUpdate(
       { endpoint },
-      { endpoint, keys, userAgent: req.headers['user-agent'] },
+      { endpoint, keys, userId: req.user.id, userAgent: req.headers['user-agent'] },
       { upsert: true, new: true }
     );
     res.json({ success: true, message: 'Subscribed to push notifications', id: sub._id });
@@ -27,7 +28,7 @@ router.post('/subscribe', async (req, res) => {
 });
 
 // DELETE unsubscribe
-router.post('/unsubscribe', async (req, res) => {
+router.post('/unsubscribe', authenticateToken, async (req, res) => {
   const { endpoint } = req.body;
   try {
     await Subscription.deleteOne({ endpoint });
@@ -38,7 +39,7 @@ router.post('/unsubscribe', async (req, res) => {
 });
 
 // POST send test notification
-router.post('/test', async (req, res) => {
+router.post('/test', authenticateToken, async (req, res) => {
   const { endpoint } = req.body;
   const webpush = req.app.locals.webpush;
 
@@ -49,7 +50,7 @@ router.post('/test', async (req, res) => {
     await webpush.sendNotification(
       { endpoint: sub.endpoint, keys: sub.keys },
       JSON.stringify({
-        title: '✅ ExpiryAlert AI',
+        title: '[Test] ExpiryAlert AI',
         body: 'Push notifications are working! You\'ll be alerted before items expire.',
         icon: '/icon-192.png',
         badge: '/badge-96.png',
@@ -69,7 +70,7 @@ router.post('/test', async (req, res) => {
 });
 
 // GET count of subscriptions
-router.get('/count', async (req, res) => {
+router.get('/count', authenticateToken, async (req, res) => {
   const count = await Subscription.countDocuments();
   res.json({ count });
 });

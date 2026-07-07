@@ -18,7 +18,7 @@
  *  Image 4 (stained)     : "10/04/2026" — single date, treat as EXP
  */
 
-// ─── Constants ────────────────────────────────────────────────────────────────
+// 
 
 const MONTH_MAP = {
   jan: 1, jan: 1, january: 1,
@@ -64,7 +64,7 @@ const FALSE_DATE_SUPPRESSORS = [
   /\b\d{5,}\b/g,                               // batch codes
 ];
 
-// ─── Date Format Patterns ─────────────────────────────────────────────────────
+// 
 
 const DATE_FORMATS = [
   // DD/MMM/YYYY — "05/DEC/2025"
@@ -149,7 +149,7 @@ const DATE_FORMATS = [
   },
 ];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// 
 
 function expandYear(y) {
   if (y >= 100) return y;
@@ -179,7 +179,7 @@ function formatDate(d) {
   return `${y}-${m}-${day}`;
 }
 
-// ─── OCR Noise Normalisation ──────────────────────────────────────────────────
+// 
 
 function normalizeText(text) {
   let t = text
@@ -224,7 +224,7 @@ function normalizeText(text) {
   return t;
 }
 
-// ─── Candidate Extraction ─────────────────────────────────────────────────────
+// 
 
 /**
  * Extract all date candidates, tagging each with:
@@ -276,7 +276,7 @@ function extractCandidates(normalizedText) {
   return candidates;
 }
 
-// ─── Deduplication ────────────────────────────────────────────────────────────
+// 
 
 /** Collapse candidates that resolve to the same calendar date. Keep highest-scored. */
 function deduplicateCandidates(candidates) {
@@ -294,7 +294,7 @@ function deduplicateCandidates(candidates) {
   return [...map.values()];
 }
 
-// ─── Scoring ──────────────────────────────────────────────────────────────────
+// 
 
 function scoreCandidate(c, now) {
   let score = 0;
@@ -309,7 +309,7 @@ function scoreCandidate(c, now) {
   return score;
 }
 
-// ─── Main detector ────────────────────────────────────────────────────────────
+// 
 
 /**
  * Detect both manufacturing and expiry dates from OCR text.
@@ -417,7 +417,7 @@ function emptyResult(normalized = '') {
   };
 }
 
-// ─── Legacy single-date API (backward-compat) ─────────────────────────────────
+// 
 
 /**
  * @deprecated Use detectDates() instead for full MFD+EXP extraction.

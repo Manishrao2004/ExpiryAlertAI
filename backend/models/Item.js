@@ -1,6 +1,12 @@
 const mongoose = require('mongoose');
 
 const itemSchema = new mongoose.Schema({
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: [true, 'User is required'],
+    index: true,
+  },
   name: {
     type: String,
     required: [true, 'Product name is required'],
@@ -17,6 +23,10 @@ const itemSchema = new mongoose.Schema({
     default: 'Safe'
   },
   imagePath: {
+    type: String,
+    default: null
+  },
+  imagePublicId: {
     type: String,
     default: null
   },
