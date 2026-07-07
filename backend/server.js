@@ -9,6 +9,7 @@ const corsMiddleware = require('./config/cors');
 const initVapid = require('./config/vapid');
 const { apiLimiter } = require('./middleware/rateLimiter');
 const { initCronJobs, checkAndNotify } = require('./jobs/cronJobs');
+const { initWorkers } = require('./utils/ocrProcessor');
 
 const app = express();
 app.set('trust proxy', 1);
@@ -18,6 +19,7 @@ const PORT = process.env.PORT || 5000;
 connectDB();
 const { webpush, vapidPublicKey } = initVapid();
 initCronJobs();
+initWorkers().catch(e => console.error('Failed to init OCR workers:', e));
 
 // 
 app.locals.webpush = webpush;
