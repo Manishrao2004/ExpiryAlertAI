@@ -40,7 +40,7 @@ async function initWorkers() {
 /**
  * Scale to a consistent width for OCR.
  */
-async function baseResize(inputPath, targetWidth = 600) {
+async function baseResize(inputPath, targetWidth = 800) {
   const meta = await sharp(inputPath).metadata();
   const w = meta.width || targetWidth;
   

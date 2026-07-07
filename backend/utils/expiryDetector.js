@@ -53,6 +53,9 @@ const EXP_KEYWORDS = /\b(exp(?:iry|iration|ires|\.)?|best\s*before|use\s*(?:by|b
 /** Keywords that signal a MANUFACTURING date */
 const MFD_KEYWORDS = /\b(mf[dg]\.?|mfg\.?\s*date|mfd\.?\s*date|manufactured?\s*(?:date|on)?|dom|date\s*of\s*(?:mfg|manufacture)|pkd\.?|packed?\s*(?:date|on)?|production\s*date|mfr\.?\s*date)\b/i;
 
+/** Keywords that signal a BATCH number (dates near these are NOT MFD/EXP) */
+const BATCH_KEYWORDS = /\b(batch\s*(?:no|number|code|id|#)?\.?\s*:?)\b/i;
+
 /** Patterns that look like dates but AREN'T — suppress before parsing */
 const FALSE_DATE_SUPPRESSORS = [
   /\b(?:rs|rs\.|inr|₹)\s*\d+[\.,]\d{2}\b/gi,   // Rs.57.00, ₹1429.00
@@ -254,10 +257,15 @@ function extractCandidates(normalizedText) {
 
       const isExp = EXP_KEYWORDS.test(lineAndBefore) || EXP_KEYWORDS.test(after);
       const isMfd = MFD_KEYWORDS.test(lineAndBefore) || MFD_KEYWORDS.test(after);
+      const isBatch = BATCH_KEYWORDS.test(lineAndBefore) || BATCH_KEYWORDS.test(after);
 
       // Reset stateful RegExp after each test
       EXP_KEYWORDS.lastIndex = 0;
       MFD_KEYWORDS.lastIndex = 0;
+      BATCH_KEYWORDS.lastIndex = 0;
+
+      // Skip dates that are clearly batch number dates
+      if (isBatch && !isExp && !isMfd) continue;
 
       candidates.push({
         date,

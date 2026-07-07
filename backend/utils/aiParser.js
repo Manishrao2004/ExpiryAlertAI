@@ -138,9 +138,17 @@ async function callVisionAI(base64Image) {
 
   const prompt = `
 You are an expert at reading Indian product labels. Look at this image and extract the manufacturing date (MFD) and expiry date (EXP).
-- Date formats used: DD/MM/YYYY, DD/MMM/YYYY, DD.MM.YY, MM/YYYY
-- If no keyword, earlier date is MFD, later date is EXP.
-- Prices like Rs.57.00 or batch codes like MN60617B7 are NOT dates.
+## Indian Label Conventions
+- Date formats used: DD/MM/YYYY, DD/MMM/YYYY, DD.MM.YY, MM/YYYY, MMM/YYYY
+- MFD keywords: MFD, MFG, MFG. DATE, MFG DATE, MANUFACTURED, DOM, PKD, PACKED
+- EXP keywords: EXP, EXPIRY, EXPIRY DATE, EXP DATE, BEST BEFORE, USE BY, USE BEFORE
+- When two dates appear with NO keyword labels, the EARLIER date is MFD and the LATER date is EXP
+- When only ONE date appears with no keyword, it is most likely the EXPIRY date
+## Things that are NOT dates
+- Prices: "Rs.57.00", "Rs.0.30 per g", "215.00", "199.00", "175.00"
+- Times: "07:18", "14:30", "20:55"
+- Batch codes: alphanumeric strings like "HAFF13", "BRH-3070", "52970513"
+- Dates next to "Batch No." are batch dates, NOT manufacturing or expiry dates
 Return ONLY raw JSON: {"mfd":"YYYY-MM-DD"|null,"exp":"YYYY-MM-DD"|null,"confidence":0.0-1.0,"reasoning":"brief"}
   `.trim();
 
@@ -204,8 +212,8 @@ async function parseDateWithAI(rawText, normalizedText = null) {
   const result1 = await callAI(rawText);
   if (!result1) return null;
 
-  // Pass 2: if low confidence AND we have a normalised version, try again
-  if (result1.confidence < 0.6 && normalizedText && normalizedText !== rawText) {
+  // Pass 2: if uncertain AND we have a normalised version, try again
+  if (result1.confidence < 0.8 && normalizedText && normalizedText !== rawText) {
     const result2 = await callAI(normalizedText);
     if (result2 && result2.confidence > result1.confidence) {
       return result2;
@@ -233,11 +241,12 @@ function mergeResults(aiResult, heuristic) {
   const exp = ai.exp || h.expStr || null;
   const mfd = ai.mfd || h.mfdStr || null;
 
-  // Confidence: AI when present, else heuristic-mapped
-  const confMap = { high: 0.85, medium: 0.65, low: 0.45, none: 0 };
+  // Confidence: trust AI confidence when available (it actually analyzed the text content).
+  // Heuristic confidence only measures keyword proximity, not date correctness.
+  const confMap = { high: 0.80, medium: 0.60, low: 0.40, none: 0 };
   const hConf = confMap[h.confidence] || 0;
   const aConf = typeof ai.confidence === 'number' ? ai.confidence : 0;
-  const confidence = Math.max(aConf, hConf);
+  const confidence = aConf > 0 ? aConf : hConf;
 
   return {
     mfd,
