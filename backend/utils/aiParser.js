@@ -46,7 +46,8 @@ You are an expert at reading Indian product labels. Extract the manufacturing da
 
 ## Confidence Scoring (CRITICAL)
 - 0.9: ALL repetitions across ALL pipelines show the EXACT SAME digits for a date. Zero disagreement.
-- 0.6: ANY repetition shows a DIFFERENT digit for the same date position (e.g. 05.02.27 vs 09.02.27 vs 00.02.27). Even if one reading appears more often, you CANNOT be sure which is correct. Use 0.6 so the system falls back to Cloud Vision.
+- 0.85: Strong majority (3+ readings agree on the same digits). A single outlier can be attributed to a common OCR error (9→5, 9→0, etc.) and safely ignored.
+- 0.6: Close split (e.g. 2 vs 2, or 2 vs 1 vs 1) where no clear majority exists. You CANNOT determine which is correct.
 - 0.4: The text is heavily garbled and you are guessing.
 
 ## OCR Text from Label
