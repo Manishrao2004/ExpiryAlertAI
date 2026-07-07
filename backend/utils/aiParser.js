@@ -152,8 +152,12 @@ You are an expert at reading Indian product labels. Look at this image and extra
 Return ONLY raw JSON: {"mfd":"YYYY-MM-DD"|null,"exp":"YYYY-MM-DD"|null,"confidence":0.0-1.0,"reasoning":"brief"}
   `.trim();
 
+  // Validate VISION_MODEL looks like a real model slug (must contain '/')
+  const envModel = process.env.VISION_MODEL;
+  const visionModel = (envModel && envModel.includes('/')) ? envModel : 'google/gemini-2.5-flash';
+
   const response = await axios.post('https://openrouter.ai/api/v1/chat/completions', {
-    model: process.env.VISION_MODEL || 'google/gemini-2.5-flash', // Must natively support images
+    model: visionModel, // Must natively support images
     max_tokens: 500, // Fixes OpenRouter 402 error for users with low credit balances
     messages: [
       {

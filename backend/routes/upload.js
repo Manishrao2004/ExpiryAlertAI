@@ -106,7 +106,7 @@ router.post('/', authenticateToken, uploadLimiter, upload.single('image'), async
     // We raised the threshold to 0.85. The AI prompt only allows 0.9 for perfect matches. 
     // Anything less is treated as uncertain and triggers the fallback.
     if (!final.exp || final.confidence < 0.85) {
-      console.log('Local OCR uncertain or failed. Falling back to Cloud Vision API...');
+      console.log(`Local OCR uncertain (confidence: ${final.confidence}). Falling back to Cloud Vision API...`);
       try {
         // Compress image before sending to Cloud Vision to prevent payload/timeout errors
         const sharp = require('sharp');
@@ -118,19 +118,25 @@ router.post('/', authenticateToken, uploadLimiter, upload.single('image'), async
         const base64Data = compressedBuffer.toString('base64');
         const dataUri = `data:image/jpeg;base64,${base64Data}`;
         
+        console.log(`Sending ${Math.round(compressedBuffer.length / 1024)}kb image to Cloud Vision...`);
         const visionResult = await callVisionAI(dataUri);
-        if (visionResult && visionResult.exp) {
+        console.log('Cloud Vision raw response:', JSON.stringify(visionResult));
+        
+        // Accept result if it has EITHER exp or mfd (not just exp)
+        if (visionResult && (visionResult.exp || visionResult.mfd)) {
           console.log('Cloud Vision succeeded!');
           final = {
-            mfd: visionResult.mfd,
-            exp: visionResult.exp,
+            mfd: visionResult.mfd || final.mfd,
+            exp: visionResult.exp || final.exp,
             confidence: visionResult.confidence || 0.9,
             source: 'cloud-vision',
             reasoning: visionResult.reasoning || 'Extracted via Vision API fallback'
           };
+        } else {
+          console.log('Cloud Vision returned no dates:', JSON.stringify(visionResult));
         }
       } catch (visionErr) {
-        console.error('Vision Fallback failed:', visionErr?.response?.data || visionErr.message);
+        console.error('Vision Fallback failed:', visionErr?.response?.status, visionErr?.response?.data || visionErr.message);
       }
     }
 
