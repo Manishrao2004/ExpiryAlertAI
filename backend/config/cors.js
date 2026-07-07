@@ -11,8 +11,12 @@ const corsOptions = {
     // Allow requests with no origin (like mobile apps, curl, or Postman)
     if (!origin) return callback(null, true);
 
-    // Dynamic origin matching
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    // Normalize slashes to prevent mismatches
+    const normalizedOrigin = origin.replace(/\/$/, '');
+    const normalizedAllowed = allowedOrigins.map(o => o.replace(/\/$/, ''));
+
+    // Allow if it matches allowedOrigins or if it's a Vercel preview/production URL
+    if (normalizedAllowed.includes(normalizedOrigin) || normalizedOrigin.endsWith('.vercel.app')) {
       callback(null, true);
     } else {
       console.warn(`[CORS] Blocked request from unauthorized origin: ${origin}`);
