@@ -7,8 +7,7 @@ const allowedOrigins = [
 ].filter(Boolean); // removes undefined
 
 const corsOptions = {
-  origin: true,
-  credentials: true,
+  origin: '*',
 };
 
 module.exports = cors(corsOptions);
