@@ -89,9 +89,15 @@ router.post('/', authenticateToken, uploadLimiter, upload.single('image'), async
     if (!final.exp || final.confidence < 0.85) {
       console.log('Local OCR uncertain or failed. Falling back to Cloud Vision API...');
       try {
-        const mimeType = req.file.mimetype;
-        const base64Data = req.file.buffer.toString('base64');
-        const dataUri = `data:${mimeType};base64,${base64Data}`;
+        // Compress image before sending to Cloud Vision to prevent payload/timeout errors
+        const sharp = require('sharp');
+        const compressedBuffer = await sharp(req.file.buffer)
+          .resize(800, null, { withoutEnlargement: true })
+          .jpeg({ quality: 80 })
+          .toBuffer();
+          
+        const base64Data = compressedBuffer.toString('base64');
+        const dataUri = `data:image/jpeg;base64,${base64Data}`;
         
         const visionResult = await callVisionAI(dataUri);
         if (visionResult && visionResult.exp) {

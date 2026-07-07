@@ -42,15 +42,12 @@ async function initWorkers() {
  */
 async function baseResize(inputPath, targetWidth = 600) {
   const meta = await sharp(inputPath).metadata();
-  const w = meta.width || 800;
-  const h = meta.height || 600;
-
-  const minDim = Math.min(w, h);
-  let scale = w < targetWidth ? Math.min(4.0, targetWidth / w) : 1;
+  const w = meta.width || targetWidth;
   
-  if (minDim < 10) scale = Math.max(scale, 20); 
-  
-  const newW = Math.max(100, Math.round(w * scale));
+  // Force downscale large images to targetWidth to drastically speed up OCR.
+  // If the image is smaller, we scale it up to targetWidth for better OCR readability.
+  const scale = targetWidth / w;
+  const newW = Math.round(w * scale);
 
   return sharp(inputPath)
     .resize(newW, null, { 
@@ -61,22 +58,19 @@ async function baseResize(inputPath, targetWidth = 600) {
 }
 
 /** Pipelines */
-async function pipelineDotMatrix(inputPath, outPath) {
-  const base = await baseResize(inputPath);
-  await base.grayscale().clahe({ width: 30, height: 30 }).normalize()
+async function pipelineDotMatrix(buffer, outPath) {
+  await sharp(buffer).grayscale().clahe({ width: 30, height: 30 }).normalize()
     .negate().blur(1.5).threshold(40).median(2).negate()
     .png({ quality: 100 }).toFile(outPath);
 }
 
-async function pipelineCleanPrint(inputPath, outPath) {
-  const base = await baseResize(inputPath);
-  await base.grayscale().normalize().sharpen({ sigma: 1.5, m1: 1.5, m2: 0.7 })
+async function pipelineCleanPrint(buffer, outPath) {
+  await sharp(buffer).grayscale().normalize().sharpen({ sigma: 1.5, m1: 1.5, m2: 0.7 })
     .threshold(140).png({ quality: 100 }).toFile(outPath);
 }
 
-async function pipelineAdaptive(inputPath, outPath) {
-  const base = await baseResize(inputPath);
-  await base.grayscale().normalize().blur(2.0).threshold(110).median(5)
+async function pipelineAdaptive(buffer, outPath) {
+  await sharp(buffer).grayscale().normalize().blur(2.0).threshold(110).median(5)
     .png({ quality: 100 }).toFile(outPath);
 }
 
@@ -118,13 +112,16 @@ async function runMultiPipelineOCR(inputPath) {
     mixed:       `${base}_e.png`,
   };
 
-  // Run ALL 5 preprocessing pipelines in parallel
+  // Decode and resize the original image exactly once
+  const baseBuffer = await (await baseResize(inputPath)).toBuffer();
+
+  // Run ALL 5 preprocessing pipelines in parallel using the pre-shrunk buffer
   await Promise.all([
-    pipelineDotMatrix(inputPath, paths.dotMatrix).catch(e => console.error('P1 Error:', e.message)),
-    pipelineCleanPrint(inputPath, paths.cleanPrint).catch(e => console.error('P2 Error:', e.message)),
-    pipelineAdaptive(inputPath, paths.adaptive).catch(e => console.error('P3 Error:', e.message)),
-    baseResize(inputPath).then(b => b.grayscale().negate().normalize().negate().threshold(160).median(1).toFile(paths.stark)).catch(e => console.error('P4 Error:', e.message)),
-    baseResize(inputPath).then(b => b.grayscale().normalize().sharpen().threshold(128).toFile(paths.mixed)).catch(e => console.error('P5 Error:', e.message)),
+    pipelineDotMatrix(baseBuffer, paths.dotMatrix).catch(e => console.error('P1 Error:', e.message)),
+    pipelineCleanPrint(baseBuffer, paths.cleanPrint).catch(e => console.error('P2 Error:', e.message)),
+    pipelineAdaptive(baseBuffer, paths.adaptive).catch(e => console.error('P3 Error:', e.message)),
+    sharp(baseBuffer).grayscale().negate().normalize().negate().threshold(160).median(1).toFile(paths.stark).catch(e => console.error('P4 Error:', e.message)),
+    sharp(baseBuffer).grayscale().normalize().sharpen().threshold(128).toFile(paths.mixed).catch(e => console.error('P5 Error:', e.message)),
   ]);
   
   const validPaths = Object.values(paths).filter(p => fs.existsSync(p));
