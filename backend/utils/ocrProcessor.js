@@ -1,63 +1,57 @@
 /**
- * ocrProcessor.js — Optimized OCR for Indian product labels (Hugging Face / Local)
+ * ocrProcessor.js — Multi-pipeline OCR for Indian product labels
  *
  * Strategy:
- *  1. Use a persistent Tesseract worker pool initialized on boot (massively improves speed).
- *  2. Early-Exit Fast Path: Try Clean Print pipeline first. If valid date found, return immediately.
- *  3. Fallback Path: Run Dot-Matrix and Adaptive pipelines concurrently via scheduler if fast path fails.
+ *  1. Run THREE preprocessing pipelines in parallel (plus 2 stark/mixed)
+ *  2. Stitch all 5 images into a single stacked image.
+ *  3. Run Tesseract on the stacked image with 3 different PSM modes.
+ *  4. Use a PERSISTENT worker pool for the 3 PSMs to eliminate initialization latency.
  */
 
 const sharp = require('sharp');
-const { createWorker, createScheduler } = require('tesseract.js');
+const { createWorker } = require('tesseract.js');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
+// 
+
 const CHAR_WHITELIST = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/-.() :,';
 
-const scheduler = createScheduler();
+// Persistent workers for speed
+const workers = {
+  '11': null,
+  '6': null,
+  '4': null
+};
 let workersInitialized = false;
 
-/**
- * Initialize worker pool. Caps at 4 cores for safety, typically 2 on HuggingFace.
- */
 async function initWorkers() {
   if (workersInitialized) return;
-  const numWorkers = Math.min(os.cpus().length, 4) || 2;
-  console.log(`[OCR] Initializing ${numWorkers} Tesseract workers for scheduler...`);
-  
-  for (let i = 0; i < numWorkers; i++) {
-    const worker = await createWorker('eng', 1, {
-      logger: () => {},
-      cachePath: os.tmpdir(),
-    });
+  console.log('[OCR] Initializing persistent Tesseract workers (PSM 11, 6, 4)...');
+  for (const psm of ['11', '6', '4']) {
+    const worker = await createWorker('eng', 1, { logger: () => {} });
     await worker.setParameters({
       tessedit_char_whitelist: CHAR_WHITELIST,
-      tessedit_pageseg_mode: '11', // PSM 11 is best for sparse text on labels
+      tessedit_pageseg_mode: psm,
     });
-    scheduler.addWorker(worker);
+    workers[psm] = worker;
   }
   workersInitialized = true;
-  console.log('[OCR] Workers initialized and ready.');
-}
-
-// Ensure workers are initialized if called directly before server boot finishes
-async function runTesseractJob(imagePath) {
-  if (!workersInitialized) await initWorkers();
-  const { data: { text, confidence } } = await scheduler.addJob('recognize', imagePath);
-  return { text: text.trim(), confidence: Math.round(confidence) };
+  console.log('[OCR] Workers initialized.');
 }
 
 /**
- * Scale to a consistent width. Target 900px for a balance of speed and accuracy.
+ * Scale to a consistent width for OCR.
  */
-async function baseResize(inputPath, targetWidth = 900) {
+async function baseResize(inputPath, targetWidth = 1000) {
   const meta = await sharp(inputPath).metadata();
   const w = meta.width || 800;
   const h = meta.height || 600;
 
   const minDim = Math.min(w, h);
   let scale = w < targetWidth ? Math.min(4.0, targetWidth / w) : 1;
+  
   if (minDim < 10) scale = Math.max(scale, 20); 
   
   const newW = Math.max(100, Math.round(w * scale));
@@ -70,26 +64,38 @@ async function baseResize(inputPath, targetWidth = 900) {
     });
 }
 
-// Fast Path Pipeline
-async function pipelineCleanPrint(inputPath, outPath) {
-  const base = await baseResize(inputPath);
-  await base.grayscale().normalize().sharpen({ sigma: 1.5, m1: 1.5, m2: 0.7 }).threshold(140).png({ quality: 100 }).toFile(outPath);
-}
-
-// Fallback Pipeline 1
+/** Pipelines */
 async function pipelineDotMatrix(inputPath, outPath) {
   const base = await baseResize(inputPath);
-  await base.grayscale().clahe({ width: 30, height: 30 }).normalize().negate().blur(1.5).threshold(40).median(2).negate().png({ quality: 100 }).toFile(outPath);
+  await base.grayscale().clahe({ width: 30, height: 30 }).normalize()
+    .negate().blur(1.5).threshold(40).median(2).negate()
+    .png({ quality: 100 }).toFile(outPath);
 }
 
-// Fallback Pipeline 2
+async function pipelineCleanPrint(inputPath, outPath) {
+  const base = await baseResize(inputPath);
+  await base.grayscale().normalize().sharpen({ sigma: 1.5, m1: 1.5, m2: 0.7 })
+    .threshold(140).png({ quality: 100 }).toFile(outPath);
+}
+
 async function pipelineAdaptive(inputPath, outPath) {
   const base = await baseResize(inputPath);
-  await base.grayscale().normalize().blur(2.0).threshold(110).median(5).png({ quality: 100 }).toFile(outPath);
+  await base.grayscale().normalize().blur(2.0).threshold(110).median(5)
+    .png({ quality: 100 }).toFile(outPath);
 }
 
+/**
+ * Run Tesseract using persistent workers
+ */
+async function runTesseract(imagePath, psm = '6') {
+  if (!workersInitialized) await initWorkers();
+  const { data: { text, confidence } } = await workers[psm].recognize(imagePath);
+  return { text: text.trim(), confidence: Math.round(confidence) };
+}
+
+// 
+
 const DATE_SCORE_RE = [
-  // Matches dd/mmm/yyyy, including common typos like 0 for O, 1 for l
   /\b\d{1,2}[\s\/\-\.]+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s\/\-\.]+\d{2,4}\b/gi,
   /\b\d{1,2}[\s\/\-\.]+\d{1,2}[\s\/\-\.]+\d{2,4}\b/g,
   /\b(?:exp|mfg|use\s*by|best\s*before|mfd|pkd|dom)\b/gi,
@@ -102,78 +108,83 @@ function dateLikeScore(text) {
   }, 0);
 }
 
-/**
- * Runs Fast Path, early exits if good, otherwise runs Fallbacks concurrently.
- */
+// 
+
 async function runMultiPipelineOCR(inputPath) {
   const tmpDir = os.tmpdir();
-  const baseId = `ocr_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
-  
-  const pClean = path.join(tmpDir, `${baseId}_clean.png`);
-  
-  // ==========================================
-  // 1. FAST PATH (Early Exit)
-  // ==========================================
-  await pipelineCleanPrint(inputPath, pClean);
-  let result = null;
-  
-  try {
-    const rClean = await runTesseractJob(pClean);
-    const score = dateLikeScore(rClean.text);
-    
-    // EARLY EXIT: Found a date-like text with decent confidence!
-    if (score > 0 && rClean.confidence > 50) {
-      try { fs.unlinkSync(pClean); } catch (e) {}
-      return {
-        text: rClean.text,
-        confidence: rClean.confidence,
-        pipeline: 'fast-path-clean',
-        raw: rClean.text,
-      };
-    }
-    result = { ...rClean, pipeline: 'clean', score: rClean.confidence * 0.4 + score * 25 };
-  } catch (e) {
-    console.error('Fast path OCR failed:', e.message);
-  }
-  
-  // ==========================================
-  // 2. FALLBACK PATH (Dot Matrix + Adaptive)
-  // ==========================================
-  const pDot = path.join(tmpDir, `${baseId}_dot.png`);
-  const pAdapt = path.join(tmpDir, `${baseId}_adapt.png`);
-  
+  const base = path.join(tmpDir, `ocr_${Date.now()}_${Math.floor(Math.random() * 10000)}`);
+
+  const paths = {
+    dotMatrix:   `${base}_a.png`,
+    cleanPrint:  `${base}_b.png`,
+    adaptive:    `${base}_c.png`,
+    stark:       `${base}_d.png`,
+    mixed:       `${base}_e.png`,
+  };
+
+  // Run ALL 5 preprocessing pipelines in parallel
   await Promise.all([
-    pipelineDotMatrix(inputPath, pDot).catch(() => {}),
-    pipelineAdaptive(inputPath, pAdapt).catch(() => {})
+    pipelineDotMatrix(inputPath, paths.dotMatrix).catch(e => console.error('P1 Error:', e.message)),
+    pipelineCleanPrint(inputPath, paths.cleanPrint).catch(e => console.error('P2 Error:', e.message)),
+    pipelineAdaptive(inputPath, paths.adaptive).catch(e => console.error('P3 Error:', e.message)),
+    baseResize(inputPath).then(b => b.grayscale().negate().normalize().negate().threshold(160).median(1).toFile(paths.stark)).catch(e => console.error('P4 Error:', e.message)),
+    baseResize(inputPath).then(b => b.grayscale().normalize().sharpen().threshold(128).toFile(paths.mixed)).catch(e => console.error('P5 Error:', e.message)),
   ]);
   
-  const jobs = [];
-  if (fs.existsSync(pDot)) jobs.push(runTesseractJob(pDot).then(r => ({ ...r, pipeline: 'dot-matrix' })).catch(() => null));
-  if (fs.existsSync(pAdapt)) jobs.push(runTesseractJob(pAdapt).then(r => ({ ...r, pipeline: 'adaptive' })).catch(() => null));
-  
-  const fallbackResults = (await Promise.all(jobs)).filter(Boolean);
-  
-  // Cleanup files
-  [pClean, pDot, pAdapt].forEach(p => {
-    try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (e) {}
-  });
+  const validPaths = Object.values(paths).filter(p => fs.existsSync(p));
+  const stackedPath = `${base}_stacked.png`;
 
-  const allResults = result ? [result, ...fallbackResults] : fallbackResults;
-  
-  if (!allResults.length) {
-    throw new Error('All OCR pipelines failed');
+  if (validPaths.length > 0) {
+    const meta = await sharp(validPaths[0]).metadata();
+    const width = meta.width;
+    const height = meta.height;
+    const gap = 50; 
+    const totalHeight = (height * validPaths.length) + (gap * (validPaths.length - 1));
+    
+    const composites = validPaths.map((p, i) => ({
+      input: p,
+      top: i * (height + gap),
+      left: 0
+    }));
+
+    await sharp({
+      create: { width, height: totalHeight, channels: 3, background: {r:255,g:255,b:255} }
+    })
+    .composite(composites)
+    .withMetadata({ density: 300 })
+    .png()
+    .toFile(stackedPath);
   }
 
-  // Score them
-  const scored = allResults.map(r => ({
+  // Run Tesseract with PSM 11, 6, and 4
+  const jobs = [];
+  if (fs.existsSync(stackedPath)) {
+    jobs.push(
+      runTesseract(stackedPath, '11').then(r => ({ ...r, pipeline: 'stacked', psm: 11 })).catch(() => null),
+      runTesseract(stackedPath, '6').then(r => ({ ...r, pipeline: 'stacked', psm: 6 })).catch(() => null),
+      runTesseract(stackedPath, '4').then(r => ({ ...r, pipeline: 'stacked', psm: 4 })).catch(() => null)
+    );
+  }
+
+  const results = (await Promise.all(jobs)).filter(Boolean);
+
+  // Cleanup temp files
+  for (const p of Object.values(paths)) {
+    try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
+  }
+  try { if (fs.existsSync(stackedPath)) fs.unlinkSync(stackedPath); } catch (_) {}
+
+  if (!results.length) throw new Error('All OCR pipelines failed');
+
+  const scored = results.map(r => ({
     ...r,
-    totalScore: r.score !== undefined ? r.score : (r.confidence * 0.4 + dateLikeScore(r.text) * 25)
-  })).sort((a, b) => b.totalScore - a.totalScore);
+    totalScore: r.confidence * 0.4 + dateLikeScore(r.text) * 25,
+  }));
+  scored.sort((a, b) => b.totalScore - a.totalScore);
 
   const best = scored[0];
   const second = scored[1];
 
-  // Merge top 2 results to catch disparate lines
   let mergedText = best.text;
   if (second && second.text) {
     const bestLines = new Set(best.text.split('\n').map(l => l.trim().toLowerCase()));
@@ -189,14 +200,12 @@ async function runMultiPipelineOCR(inputPath) {
     text: mergedText.trim(),
     confidence: best.confidence,
     pipeline: best.pipeline,
+    psm: best.psm,
     raw: best.text,
-    allResults: scored.slice(0, 3),
+    allResults: scored.slice(0, 3), 
   };
 }
 
-/**
- * Main entry point
- */
 async function extractTextFromImage(imagePath) {
   try {
     const result = await runMultiPipelineOCR(imagePath);
@@ -204,7 +213,7 @@ async function extractTextFromImage(imagePath) {
       text: result.text,
       confidence: result.confidence,
       raw: result.raw,
-      debug: { pipeline: result.pipeline },
+      debug: { pipeline: result.pipeline, psm: result.psm },
     };
   } catch (err) {
     console.error('OCR error:', err.message);
