@@ -74,12 +74,31 @@ router.post('/', authenticateToken, uploadLimiter, upload.single('image'), async
     // If we detect a hallucinated date we crush the confidence to force a Cloud Vision fallback.
     if (final.exp && final.source === 'ai') {
       const year = final.exp.split('-')[0].substring(2); // "27" from "2027"
-      const month = final.exp.split('-')[1]; // "05"
-      // Remove spaces/punctuation from text to check for garbled substrings
       const strippedText = text.replace(/[\s\.\/,-]/g, '');
       if (!strippedText.includes(year) && !text.includes(year)) {
         console.log(`[Guardrail] AI hallucinated year '${year}'. Forcing Cloud Vision fallback.`);
         final.confidence = 0.1;
+      }
+    }
+
+    // ── OCR DIGIT CONFUSION DETECTOR ────────────────────────────────────────
+    // OCR commonly confuses 6↔8 and 5↔3 in year digits. If the result says "2028"
+    // but the OCR text also contains "2026", it's a systematic distortion.
+    // Force Cloud Vision to read the actual image pixels instead of trusting garbled text.
+    if (final.confidence > 0.1) {
+      const DIGIT_SWAPS = { '6': '8', '8': '6', '5': '3', '3': '5' };
+      const datesToCheck = [final.exp, final.mfd].filter(Boolean);
+      for (const dateStr of datesToCheck) {
+        const year = dateStr.split('-')[0]; // "2028"
+        const lastDigit = year[3];
+        if (DIGIT_SWAPS[lastDigit]) {
+          const twinYear = year.slice(0, 3) + DIGIT_SWAPS[lastDigit]; // "2026"
+          if (text.includes(twinYear)) {
+            console.log(`[Guardrail] OCR digit confusion: result has ${year} but text also contains ${twinYear}. Forcing Cloud Vision.`);
+            final.confidence = 0.1;
+            break;
+          }
+        }
       }
     }
 
