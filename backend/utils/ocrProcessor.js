@@ -167,37 +167,24 @@ async function runMultiPipelineOCR(inputPath) {
     mixed:       `${base}_e.png`,
   };
 
-  const isProd = process.env.NODE_ENV === 'production';
-
-  if (isProd) {
-    // Run ALL 5 preprocessing pipelines sequentially to prevent CPU spikes and timeouts on free-tier Render instances
-    try { await pipelineDotMatrix(inputPath, paths.dotMatrix); } catch (e) { console.error('P1 Error:', e.message); }
-    try { await pipelineCleanPrint(inputPath, paths.cleanPrint); } catch (e) { console.error('P2 Error:', e.message); }
-    try { await pipelineAdaptive(inputPath, paths.adaptive); } catch (e) { console.error('P3 Error:', e.message); }
-    
-    try {
-      const b1 = await baseResize(inputPath);
-      await b1.grayscale().negate().normalize().negate().threshold(160).median(1).toFile(paths.stark);
-    } catch (e) { console.error('P4 Error:', e.message); }
-
-    try {
-      const b2 = await baseResize(inputPath);
-      await b2.grayscale().normalize().sharpen().threshold(128).toFile(paths.mixed);
-    } catch (e) { console.error('P5 Error:', e.message); }
-  } else {
-    // Run ALL 5 preprocessing pipelines in parallel for faster development
-    await Promise.all([
-      pipelineDotMatrix(inputPath, paths.dotMatrix).catch(e => console.error('P1 Error:', e.message)),
-      pipelineCleanPrint(inputPath, paths.cleanPrint).catch(e => console.error('P2 Error:', e.message)),
-      pipelineAdaptive(inputPath, paths.adaptive).catch(e => console.error('P3 Error:', e.message)),
-      baseResize(inputPath).then(b => 
-        b.grayscale().negate().normalize().negate().threshold(160).median(1).toFile(paths.stark)
-      ).catch(e => console.error('P4 Error:', e.message)),
-      baseResize(inputPath).then(b =>
-        b.grayscale().normalize().sharpen().threshold(128).toFile(paths.mixed)
-      ).catch(e => console.error('P5 Error:', e.message)),
-    ]);
-  }
+  // Run ALL 5 preprocessing pipelines in parallel (Restoring maximum accuracy and speed for Hugging Face)
+  await Promise.all([
+    pipelineDotMatrix(inputPath, paths.dotMatrix).catch(e => console.error('P1 Error:', e.message)),
+    pipelineCleanPrint(inputPath, paths.cleanPrint).catch(e => console.error('P2 Error:', e.message)),
+    pipelineAdaptive(inputPath, paths.adaptive).catch(e => console.error('P3 Error:', e.message)),
+    // Pipeline D: Stark Contrast
+    baseResize(inputPath).then(b => 
+      b.grayscale().negate().normalize().negate().threshold(160).median(1).toFile(paths.stark)
+    ).catch(e => console.error('P4 Error:', e.message)),
+    // Pipeline E: Mixed Polarity
+    baseResize(inputPath).then(b =>
+      b.grayscale()
+       .normalize()
+       .sharpen()
+       .threshold(128)
+       .toFile(paths.mixed)
+    ).catch(e => console.error('P5 Error:', e.message)),
+  ]);
 
   // 
   // Instead of spawning 15 concurrent Tesseract workers (which choked the CPU for 16s),
@@ -229,34 +216,17 @@ async function runMultiPipelineOCR(inputPath) {
     .toFile(stackedPath);
   }
 
-  // Run Tesseract with PSM 11, 6, and 4
-  const results = [];
+  // Run Tesseract with PSM 11, 6, and 4 in parallel for maximum speed
+  const jobs = [];
   if (fs.existsSync(stackedPath)) {
-    if (isProd) {
-      // sequentially to avoid CPU/memory thrashing on low-power servers
-      try {
-        const r11 = await runTesseract(stackedPath, '11');
-        if (r11) results.push({ ...r11, pipeline: 'stacked', psm: 11 });
-      } catch (_) {}
-      try {
-        const r6 = await runTesseract(stackedPath, '6');
-        if (r6) results.push({ ...r6, pipeline: 'stacked', psm: 6 });
-      } catch (_) {}
-      try {
-        const r4 = await runTesseract(stackedPath, '4');
-        if (r4) results.push({ ...r4, pipeline: 'stacked', psm: 4 });
-      } catch (_) {}
-    } else {
-      // in parallel for faster development
-      const jobs = [
-        runTesseract(stackedPath, '11').then(r => ({ ...r, pipeline: 'stacked', psm: 11 })).catch(() => null),
-        runTesseract(stackedPath, '6').then(r => ({ ...r, pipeline: 'stacked', psm: 6 })).catch(() => null),
-        runTesseract(stackedPath, '4').then(r => ({ ...r, pipeline: 'stacked', psm: 4 })).catch(() => null)
-      ];
-      const res = (await Promise.all(jobs)).filter(Boolean);
-      results.push(...res);
-    }
+    jobs.push(
+      runTesseract(stackedPath, '11').then(r => ({ ...r, pipeline: 'stacked', psm: 11 })).catch(() => null),
+      runTesseract(stackedPath, '6').then(r => ({ ...r, pipeline: 'stacked', psm: 6 })).catch(() => null),
+      runTesseract(stackedPath, '4').then(r => ({ ...r, pipeline: 'stacked', psm: 4 })).catch(() => null)
+    );
   }
+
+  const results = (await Promise.all(jobs)).filter(Boolean);
 
   // Cleanup temp files
   for (const p of Object.values(paths)) {
