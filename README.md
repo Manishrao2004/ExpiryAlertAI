@@ -1,3 +1,12 @@
+---
+title: ExpiryAlert Backend
+emoji: 🚀
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+app_port: 7860
+---
 <div align="center">
 
 
@@ -201,6 +210,26 @@ Frontend will be available at: **`http://localhost:5173`**
 
 ---
 
+## 🚀 Production Deployment
+
+ExpiryAlert AI is designed to be deployed with a **decoupled architecture**: the frontend on Vercel/Netlify, and the backend on Render/Heroku.
+
+### 1. Backend (Render / Heroku / AWS)
+1. Set up a Node.js web service.
+2. Set the build command: `npm install`
+3. Set the start command: `npm start`
+4. Ensure you set all the `.env` variables from `backend/.env.example` in your hosting provider's dashboard.
+5. **Important:** The `VAPID_EMAIL` must be set for push notifications to work.
+
+### 2. Frontend (Vercel / Netlify)
+1. Deploy the `frontend/` directory to Vercel.
+2. The repository already includes a `vercel.json` file which automatically rewrites React Router paths to prevent 404 errors on refresh.
+3. In your Vercel project settings, add the following Environment Variable:
+   - `VITE_API_URL`: Set this to your deployed backend URL (e.g. `https://your-backend.onrender.com`).
+4. **Push Notifications:** The PWA Service Worker (`sw.js`) natively supports remote backend push notifications out-of-the-box. No extra Vercel config is needed!
+
+---
+
 ## 📱 Testing on a Real Phone (via ngrok)
 
 Push notifications and camera access require **HTTPS**. Use ngrok to get a public HTTPS tunnel to your local machine so you can test on your phone.
@@ -298,32 +327,32 @@ Forwarding   https://abcd-1234-xxxx.ngrok-free.app -> http://localhost:5173
 
 ---
 
-## 🧠 How the AI Pipeline Works
+## 🧠 How the Hybrid AI Pipeline Works
 
-```
+ExpiryAlert AI uses a robust 3-stage **Hybrid Edge-to-Cloud OCR** architecture to ensure perfect date extraction from even the worst Indian product labels.
+
+```text
 User uploads photo
        │
        ▼
-  Sharp pre-processing
-  (resize, grayscale, contrast)
+  STAGE 1: Vertical Stacking OCR (Local/Edge)
+  (Sharp generates 5 variations: Dot-Matrix, Clean Print, Stark Contrast, Mixed Polarity)
        │
        ▼
-  Tesseract.js OCR
-  (multi-PSM strategy: 6, 11, 4)
+  Tesseract.js extracts text from ALL 5 stacked variations simultaneously
        │
        ▼
-  Heuristic Date Detector
-  (30+ regex patterns: DD/MM/YY, MON-YYYY, etc.)
+  STAGE 2: Edge AI (Local Gemini Flash via OpenRouter)
+  (AI looks for dates across the 5 stacks. It uses a "Majority Consensus" algorithm
+   to correct distortions—e.g. if one pipeline reads "5-Feb" but three read "9-Feb",
+   it outputs "9-Feb").
        │
-       ├──── found with high confidence? ──► use heuristic result
-       │
-       ▼
-  OpenRouter LLM (AI fallback)
-  (sends raw OCR text, returns structured date + reasoning)
+       ├──── confidence > 75%? ──► Return result instantly
        │
        ▼
-  mergeResults()
-  (picks highest-confidence result, returns exp + mfd + source)
+  STAGE 3: Cloud Vision Fallback
+  (If the label has no dates, or the Edge AI detects an unresolvable conflict,
+   the image is securely passed to Google Gemini Vision API to analyze visually)
        │
        ▼
   Return to frontend
