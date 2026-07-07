@@ -20,23 +20,19 @@ const CHAR_WHITELIST = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrst
 
 // Persistent workers for speed
 const workers = {
-  '11': null,
-  '6': null,
-  '4': null
+  '6': null
 };
 let workersInitialized = false;
 
 async function initWorkers() {
   if (workersInitialized) return;
-  console.log('[OCR] Initializing persistent Tesseract workers (PSM 11, 6, 4)...');
-  for (const psm of ['11', '6', '4']) {
-    const worker = await createWorker('eng', 1, { logger: () => {} });
-    await worker.setParameters({
-      tessedit_char_whitelist: CHAR_WHITELIST,
-      tessedit_pageseg_mode: psm,
-    });
-    workers[psm] = worker;
-  }
+  console.log('[OCR] Initializing persistent Tesseract worker (PSM 6)...');
+  const worker = await createWorker('eng', 1, { logger: () => {} });
+  await worker.setParameters({
+    tessedit_char_whitelist: CHAR_WHITELIST,
+    tessedit_pageseg_mode: '6',
+  });
+  workers['6'] = worker;
   workersInitialized = true;
   console.log('[OCR] Workers initialized.');
 }
@@ -44,7 +40,7 @@ async function initWorkers() {
 /**
  * Scale to a consistent width for OCR.
  */
-async function baseResize(inputPath, targetWidth = 1000) {
+async function baseResize(inputPath, targetWidth = 600) {
   const meta = await sharp(inputPath).metadata();
   const w = meta.width || 800;
   const h = meta.height || 600;
@@ -156,13 +152,11 @@ async function runMultiPipelineOCR(inputPath) {
     .toFile(stackedPath);
   }
 
-  // Run Tesseract with PSM 11, 6, and 4
+  // Run Tesseract with PSM 6
   const jobs = [];
   if (fs.existsSync(stackedPath)) {
     jobs.push(
-      runTesseract(stackedPath, '11').then(r => ({ ...r, pipeline: 'stacked', psm: 11 })).catch(() => null),
-      runTesseract(stackedPath, '6').then(r => ({ ...r, pipeline: 'stacked', psm: 6 })).catch(() => null),
-      runTesseract(stackedPath, '4').then(r => ({ ...r, pipeline: 'stacked', psm: 4 })).catch(() => null)
+      runTesseract(stackedPath, '6').then(r => ({ ...r, pipeline: 'stacked', psm: 6 })).catch(() => null)
     );
   }
 

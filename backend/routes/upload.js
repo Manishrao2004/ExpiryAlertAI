@@ -69,8 +69,24 @@ router.post('/', authenticateToken, uploadLimiter, upload.single('image'), async
     const aiResult = await parseDateWithAI(text, heuristicResult.normalized);
     let final = mergeResults(aiResult, heuristicResult);
 
+    // ── ANTI-HALLUCINATION GUARDRAIL ──────────────────────────────────────────
+    // If the AI hallucinates an expiration date, its year/month typically won't exist in the raw OCR text.
+    // If we detect a hallucinated date we crush the confidence to force a Cloud Vision fallback.
+    if (final.exp && final.source === 'ai') {
+      const year = final.exp.split('-')[0].substring(2); // "27" from "2027"
+      const month = final.exp.split('-')[1]; // "05"
+      // Remove spaces/punctuation from text to check for garbled substrings
+      const strippedText = text.replace(/[\s\.\/,-]/g, '');
+      if (!strippedText.includes(year) && !text.includes(year)) {
+        console.log(`[Guardrail] AI hallucinated year '${year}'. Forcing Cloud Vision fallback.`);
+        final.confidence = 0.1;
+      }
+    }
+
     // ── HYBRID FALLBACK: If local OCR failed entirely or has LOW CONFIDENCE, use Cloud Vision ───────
-    if (!final.exp || final.confidence < 0.75) {
+    // We raised the threshold to 0.85. The AI prompt only allows 0.9 for perfect matches. 
+    // Anything less is treated as uncertain and triggers the fallback.
+    if (!final.exp || final.confidence < 0.85) {
       console.log('Local OCR uncertain or failed. Falling back to Cloud Vision API...');
       try {
         const mimeType = req.file.mimetype;
