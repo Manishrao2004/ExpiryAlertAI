@@ -217,8 +217,8 @@ async function parseDateWithAI(rawText, normalizedText = null) {
   const result1 = await callAI(rawText);
   if (!result1) return null;
 
-  // Pass 2: if uncertain AND we have a normalised version, try again
-  if (result1.confidence < 0.8 && normalizedText && normalizedText !== rawText) {
+  // Pass 2: only retry on very low confidence with normalised text
+  if (result1.confidence < 0.6 && normalizedText && normalizedText !== rawText) {
     const result2 = await callAI(normalizedText);
     if (result2 && result2.confidence > result1.confidence) {
       return result2;
@@ -246,12 +246,13 @@ function mergeResults(aiResult, heuristic) {
   const exp = ai.exp || h.expStr || null;
   const mfd = ai.mfd || h.mfdStr || null;
 
-  // Confidence: trust AI confidence when available (it actually analyzed the text content).
-  // Heuristic confidence only measures keyword proximity, not date correctness.
+  // Confidence: take the higher of AI and heuristic.
+  // Heuristic 'high' is capped at 0.80 (below 0.85 Cloud Vision threshold)
+  // so keyword-only matches still trigger Cloud Vision when AI is uncertain.
   const confMap = { high: 0.80, medium: 0.60, low: 0.40, none: 0 };
   const hConf = confMap[h.confidence] || 0;
   const aConf = typeof ai.confidence === 'number' ? ai.confidence : 0;
-  const confidence = aConf > 0 ? aConf : hConf;
+  const confidence = Math.max(aConf, hConf);
 
   return {
     mfd,
