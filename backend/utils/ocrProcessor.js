@@ -121,7 +121,10 @@ const CHAR_WHITELIST =
  * PSM 4 = single column of text
  */
 async function runTesseract(imagePath, psm = '6') {
-  const worker = await createWorker('eng', 1, { logger: () => {} });
+  const worker = await createWorker('eng', 1, {
+    logger: () => {},
+    cachePath: os.tmpdir(),
+  });
   await worker.setParameters({
     tessedit_char_whitelist: CHAR_WHITELIST,
     tessedit_pageseg_mode: psm,
