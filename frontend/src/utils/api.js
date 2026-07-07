@@ -10,7 +10,7 @@ if (isProd && !BASE) {
 
 const api = axios.create({
   baseURL: BASE ? `${BASE}/api` : '/api',
-  timeout: 30000,
+  timeout: 120000,
 });
 
 // 
