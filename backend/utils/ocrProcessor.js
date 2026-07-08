@@ -27,7 +27,11 @@ let workersInitialized = false;
 async function initWorkers() {
   if (workersInitialized) return;
   console.log('[OCR] Initializing persistent Tesseract worker (PSM 6)...');
-  const worker = await createWorker('eng', 1, { logger: () => {} });
+  const worker = await createWorker('eng', 1, {
+    logger: () => {},
+    cachePath: '/tmp',
+    langPath: '/tmp'
+  });
   await worker.setParameters({
     tessedit_char_whitelist: CHAR_WHITELIST,
     tessedit_pageseg_mode: '6',
