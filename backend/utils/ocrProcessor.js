@@ -27,11 +27,22 @@ let workersInitialized = false;
 async function initWorkers() {
   if (workersInitialized) return;
   console.log('[OCR] Initializing persistent Tesseract worker (PSM 6)...');
-  const worker = await createWorker('eng', 1, {
-    logger: () => {},
-    cachePath: '/tmp',
-    langPath: '/tmp'
-  });
+  const workerOptions = { logger: () => {} };
+  
+  // Point to the baked-in tessdata directory we created in the Dockerfile.
+  const tessdataDir = path.join(__dirname, '..', 'tessdata');
+  if (!fs.existsSync(tessdataDir)) fs.mkdirSync(tessdataDir, { recursive: true });
+
+  workerOptions.cachePath = tessdataDir;
+  
+  // If the file is already downloaded (e.g. by Dockerfile), point langPath directly to it
+  // so Tesseract doesn't attempt to download. If not (e.g. running locally), leave langPath 
+  // undefined so Tesseract uses the remote CDN and caches it in cachePath.
+  if (fs.existsSync(path.join(tessdataDir, 'eng.traineddata.gz'))) {
+    workerOptions.langPath = tessdataDir;
+  }
+  
+  const worker = await createWorker('eng', 1, workerOptions);
   await worker.setParameters({
     tessedit_char_whitelist: CHAR_WHITELIST,
     tessedit_pageseg_mode: '6',
