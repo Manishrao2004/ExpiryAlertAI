@@ -44,14 +44,17 @@ app.use('/api/notifications', require('./routes/notifications'));
 
 // 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', time: new Date() }));
+
+// Root route for PAAS HTTP health checkers (Hugging Face / Render)
+app.get('/', (req, res) => res.send('ExpiryAlert AI Backend is running!'));
+
 app.post('/api/admin/check-notify', async (req, res) => {
   await checkAndNotify();
   res.json({ message: 'Notification check triggered' });
 });
 
 // 
-app.listen(PORT, () => {
-  console.log(`[System] ExpiryAlert AI backend: http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`[System] ExpiryAlert AI backend: http://0.0.0.0:${PORT}`);
   console.log(`[System] VAPID Public Key: ${vapidPublicKey}`);
 });
-
