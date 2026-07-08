@@ -40,7 +40,7 @@ async function initWorkers() {
 /**
  * Scale to a consistent width for OCR.
  */
-async function baseResize(inputPath, targetWidth = 800) {
+async function baseResize(inputPath, targetWidth = 600) {
   const meta = await sharp(inputPath).metadata();
   const w = meta.width || targetWidth;
   
@@ -53,7 +53,7 @@ async function baseResize(inputPath, targetWidth = 800) {
     .resize(newW, null, { 
       withoutEnlargement: false, 
       kernel: sharp.kernel.lanczos3,
-      fastShrinkOnLoad: false 
+      fastShrinkOnLoad: true 
     });
 }
 

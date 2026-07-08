@@ -140,6 +140,27 @@ router.post('/', authenticateToken, uploadLimiter, upload.single('image'), async
       }
     }
 
+    // ── DATE SANITY: later date = EXP, earlier date = MFD ────────────────────
+    // Regardless of what any source (AI, heuristic, Cloud Vision) returned,
+    // if both dates exist, the chronologically later one must be EXP.
+    if (final.mfd && final.exp) {
+      const mfdTime = new Date(final.mfd).getTime();
+      const expTime = new Date(final.exp).getTime();
+      if (mfdTime > expTime) {
+        console.log(`[Sanity] Swapping dates: mfd=${final.mfd} was after exp=${final.exp}`);
+        const tmp = final.mfd;
+        final.mfd = final.exp;
+        final.exp = tmp;
+      }
+    }
+    // If only one date was found and it was put in mfd (no exp), move it to exp
+    // since without context the single date is more likely an expiry date
+    if (final.mfd && !final.exp) {
+      console.log(`[Sanity] Only mfd found (${final.mfd}), treating as exp`);
+      final.exp = final.mfd;
+      final.mfd = null;
+    }
+
     // ── Return OCR + date results only — image NOT saved yet ──────────────────
     res.json({
       success: true,
