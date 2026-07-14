@@ -27,29 +27,48 @@ let workersInitialized = false;
 async function initWorkers() {
   if (workersInitialized) return;
   console.log('[OCR] Initializing persistent Tesseract worker (PSM 6)...');
-  const workerOptions = { logger: () => {} };
-  
-  // Point to the baked-in tessdata directory we created in the Dockerfile.
-  const tessdataDir = path.join(__dirname, '..', 'tessdata');
-  if (!fs.existsSync(tessdataDir)) fs.mkdirSync(tessdataDir, { recursive: true });
 
-  workerOptions.cachePath = tessdataDir;
-  
-  // If the file is already downloaded (e.g. by Dockerfile), point langPath directly to it
-  // so Tesseract doesn't attempt to download. If not (e.g. running locally), leave langPath 
-  // undefined so Tesseract uses the remote CDN and caches it in cachePath.
-  if (fs.existsSync(path.join(tessdataDir, 'eng.traineddata.gz'))) {
-    workerOptions.langPath = tessdataDir;
+  // Timeout: if worker init takes > 60s, give up gracefully instead of hanging.
+  const INIT_TIMEOUT_MS = 60000;
+
+  const initPromise = (async () => {
+    const workerOptions = { logger: () => {} };
+    
+    // Point to the baked-in tessdata directory we created in the Dockerfile.
+    const tessdataDir = path.join(__dirname, '..', 'tessdata');
+    if (!fs.existsSync(tessdataDir)) fs.mkdirSync(tessdataDir, { recursive: true });
+
+    workerOptions.cachePath = tessdataDir;
+    
+    // Check for both compressed and decompressed tessdata.
+    // Dockerfile decompresses .gz → .traineddata. Locally it may be either.
+    if (fs.existsSync(path.join(tessdataDir, 'eng.traineddata')) ||
+        fs.existsSync(path.join(tessdataDir, 'eng.traineddata.gz'))) {
+      workerOptions.langPath = tessdataDir;
+    }
+    // If neither file exists (e.g. fresh local clone), Tesseract.js downloads from CDN automatically.
+    
+    const worker = await createWorker('eng', 1, workerOptions);
+    await worker.setParameters({
+      tessedit_char_whitelist: CHAR_WHITELIST,
+      tessedit_pageseg_mode: '6',
+    });
+    return worker;
+  })();
+
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('Tesseract worker initialization timed out after 60s')), INIT_TIMEOUT_MS)
+  );
+
+  try {
+    const worker = await Promise.race([initPromise, timeoutPromise]);
+    workers['6'] = worker;
+    workersInitialized = true;
+    console.log('[OCR] Workers initialized.');
+  } catch (err) {
+    console.error(`[OCR] Worker init failed: ${err.message}. OCR will be unavailable.`);
+    // Don't crash — the server keeps running. OCR requests will return errors.
   }
-  
-  const worker = await createWorker('eng', 1, workerOptions);
-  await worker.setParameters({
-    tessedit_char_whitelist: CHAR_WHITELIST,
-    tessedit_pageseg_mode: '6',
-  });
-  workers['6'] = worker;
-  workersInitialized = true;
-  console.log('[OCR] Workers initialized.');
 }
 
 /**

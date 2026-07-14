@@ -3,10 +3,11 @@ title: ExpiryAlert Backend
 emoji: 🚀
 colorFrom: blue
 colorTo: indigo
-sdk: docker
-pinned: false
+sdk: gradio
 app_port: 7860
+pinned: false
 ---
+
 <div align="center">
 
 

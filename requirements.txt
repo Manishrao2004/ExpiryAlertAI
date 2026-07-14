@@ -1,0 +1,2 @@
+# No Python dependencies needed — this Space runs a Node.js backend.
+# This file exists to satisfy the HF Gradio SDK requirement.
